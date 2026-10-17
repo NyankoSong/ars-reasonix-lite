@@ -1,0 +1,52 @@
+name: sync-trimmed
+
+on:
+  schedule:
+    - cron: '23 3 * * *'     # daily at 03:23 UTC
+  workflow_dispatch: {}       # manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repo (for trim.sh + this workflow)
+        uses: actions/checkout@v4
+
+      - name: Clone upstream
+        run: |
+          git clone --depth 1 https://github.com/Imbad0202/academic-research-skills.git upstream
+
+      - name: Trim
+        run: |
+          cd upstream
+          bash "$GITHUB_WORKSPACE/trim.sh"
+
+      - name: Restore builder files
+        run: |
+          cp "$GITHUB_WORKSPACE/trim.sh" upstream/trim.sh
+          mkdir -p upstream/.github/workflows
+          cp "$GITHUB_WORKSPACE/.github/workflows/sync.yml" upstream/.github/workflows/sync.yml
+
+      - name: Force-push trimmed result (skip if unchanged)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd upstream
+          rm -rf .git
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          NEW_TREE="$(git write-tree)"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth 1 origin main 2>/dev/null || true
+          OLD_TREE="$(git rev-parse 'origin/main^{tree}' 2>/dev/null || true)"
+          if [ -n "$OLD_TREE" ] && [ "$OLD_TREE" = "$NEW_TREE" ]; then
+            echo "Up to date — no changes to push."
+            exit 0
+          fi
+          git commit -m "trim upstream ($(date -u +%F))"
+          git push --force origin main
